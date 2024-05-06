@@ -2,7 +2,9 @@ name: NewTest
 on: [push]
 env: 
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.71.1
+  # Having this as an env variable that is semi-expanded in the matrix definition feels like a hack,
+  # and makes the job names look weird, so instead it is addedd to the matrix definitions below.
+  # RUST_VERSION: 1.71.1
 
 jobs:
   test:
@@ -12,6 +14,9 @@ jobs:
       matrix:
         platform: [ubuntu-latest, windows-latest]
         rust_version: [""]
+        include:
+          - platform: "ubuntu-latest"
+            rust_version: "1.71.1" # RUST_VERSION
       fail-fast: false
     permissions:
       checks: write
@@ -67,6 +72,7 @@ jobs:
         with:
           report_paths: "target/nextest/ci/*.xml"
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
+          include_passed: true
 
       # - name: "Save Test Results"
       #   if: success() || failure() # always upload test results unless canceled
