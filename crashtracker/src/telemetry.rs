@@ -191,7 +191,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        fs, time,
+        env, fs, time,
     };
 
     use crate::SigInfo;

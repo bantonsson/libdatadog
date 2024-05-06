@@ -2,16 +2,21 @@ name: NewTest
 on: [push]
 env: 
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.71.1
+  # Having this as an env variable that is semi-expanded in the matrix definition feels like a hack,
+  # and makes the job names look weird, so instead it is addedd to the matrix definitions below.
+  # RUST_VERSION: 1.71.1
 
 jobs:
   test:
-    name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] cargo nextest --workspace"
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [ubuntu-latest]
+        platform: [ubuntu-latest, windows-latest]
         rust_version: [""]
+        include:
+          - platform: "ubuntu-latest"
+            rust_version: "1.71.1" # RUST_VERSION
       fail-fast: false
     permissions:
       checks: write
@@ -28,7 +33,7 @@ jobs:
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
-        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+        run: bash -c 'VER=$(rustc --version); SVER=$(echo "$VER" | cut -d " " -f 2); echo "version=$VER" >> $GITHUB_OUTPUT; echo "short-version=$SVER" >> $GITHUB_OUTPUT'
       - name: Install cargo nextest
         uses: taiki-e/install-action@v2.32.20
         with: 
@@ -44,14 +49,76 @@ jobs:
           large-packages: true
           docker-images: true
           swap-storage: true
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
+      - name: "Remove nextest CI report"
+        shell: bash
+        run: rm -rf target/nextest/ci/junit.xml
+      - name: "[${{ steps.rust-version.outputs.version }}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --profile ci --verbose"
+      - name: "[${{ steps.rust-version.outputs.version }} WIN] cargo nextest run --profile ci --verbose"
+        if: ${{ matrix.platform == 'windows-latest' }}
         run: cargo nextest run --profile ci --verbose
         env:
           RUST_BACKTRACE: 1
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always()
+          # TODO do we need to create multiple junit files for the different test runs?
+      - name: "[${{ steps.rust-version.outputs.version }} UBU] cargo nextest run --profile ci --verbose"
+        if: ${{ matrix.platform == 'ubuntu-latest' }}
+        run: cargo nextest run --profile ci --verbose
+        env:
+          RUST_BACKTRACE: 1
+          # TODO do we need to create multiple junit files for the different test runs
+      - name: Report Test Results
+        if: success() || failure() 
+        uses: mikepenz/action-junit-report@v4
         with:
-          files: target/nextest/**/*.xml
+          report_paths: "target/nextest/ci/*.xml"
+          check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
+          include_passed: true
+      - name: Report required results
+        if: success() && ${{ matrix.platform == 'ubuntu-latest' }} && ${{ matrix.rust_version == '1.71.1' }}
+        run: echo "required_1_passed=true" >> $GITHUB_OUTPUT;
+
+      # - name: Report Test Results
+      #   if: success() || failure() 
+      #   uses: EnricoMi/publish-unit-test-result-action@v2
+      #   with:
+      #     files: "target/nextest/ci/junit.xml"
+      #     check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
+      #     comment_mode: "off"
+      # - name: "Save Test Results"
+      #   if: success() || failure() # always upload test results unless canceled
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: test-results-${{ matrix.platform }}-${{ steps.rust-version.outputs.short-version }}
+      #     path: target/nextest/ci*/*.xml
+
+  # publish-test-results:
+  #     name: "Publish Tests Results"
+  #     needs: test
+  #     runs-on: ubuntu-latest
+  #     permissions:
+  #       checks: write
+  #       pull-requests: write
+  #     if: success() || failure() 
+  #     steps:
+  #       - name: Download Artifacts
+  #         uses: actions/download-artifact@v4
+  #         with:
+  #           path: artifacts
+  #       - name: List Artifacts
+  #         run: ls -laR artifacts
+  #       - name: Report Test Results
+  #         uses: mikepenz/action-junit-report@v4
+  #         with:
+  #           report_paths: "artifacts/**/*.xml"
+  #           check_name: "Report Test Results"
+  required-tests:
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: success() || failure()
+    steps:
+      - name: Required success
+        if: ${{ needs.test.outputs.required_1_passed == 'true' }}
+        run: echo "Required tests passed"
+      - name: Required failure
+        if: ${{ needs.test.outputs.required_1_passed != 'true' }}
+        run: echo "Required tests failed" && exit 1
